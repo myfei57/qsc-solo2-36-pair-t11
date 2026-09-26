@@ -84,15 +84,15 @@ class DriveController:
 
     def slow_enough(self, unit: str, threshold: int) -> bool:
         """Report whether the rotor is at or below a threshold."""
-        return True
+        return self.speed(unit) <= int(threshold)
 
     def sync_speed(self, unit: str) -> int:
         """Return the rotor speed required before synchronising."""
-        return SYNC_SPEED
+        return int(self._limit(unit, "sync_speed", SYNC_SPEED))
 
     def max_load(self, unit: str) -> int:
         """Return the load ceiling of the unit."""
-        return MAX_LOAD
+        return int(self._limit(unit, "max_load", MAX_LOAD))
 
     def grid_connected(self, unit: str) -> bool:
         """Report whether the breaker is closed to the grid."""
@@ -148,6 +148,15 @@ class DriveController:
 
     def set_load(self, unit: str, load: int) -> dict[str, Any]:
         """Record a load, refusing one above the unit ceiling."""
+        ceiling = self.max_load(unit)
+        if not 0 <= int(load) <= ceiling:
+            raise LimitViolationError(
+                f"load {load} is outside 0..{ceiling} for unit {unit}",
+                unit=unit,
+                value=int(load),
+                low=0,
+                high=ceiling,
+            )
         record = self._stream.append(
             "drive.load",
             scope_key("drive", unit, "load"),
@@ -169,6 +178,14 @@ class DriveController:
     def sync_grid(self, unit: str) -> dict[str, Any]:
         """Close the breaker once the rotor is inside the synchronising window."""
         speed = self.speed(unit)
+        window = self.sync_speed(unit)
+        if speed < window:
+            raise OrderingError(
+                f"sync refused: rotor is at {speed} rpm, below the window {window}",
+                unit=unit,
+                speed=speed,
+                window=window,
+            )
         record = self._stream.append(
             "drive.sync",
             scope_key("drive", unit, "breaker"),
